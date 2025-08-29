@@ -1,39 +1,62 @@
-
 from db import run_query, init_db
 from sql_generator import generate_sql_from_nl, build_prompt
 from pathlib import Path
 
-SCHEMA_FILE = Path(__file__).parent / 'sample_data.sql'
+SCHEMA_FILE = Path(__file__).parent / "sample_data.sql"
+
 def get_schema_text():
     return SCHEMA_FILE.read_text()
 
-def handle_nl_request(nl_text, openai_api_key=None, model='gpt-4o', max_clarify=1, use_langchain=False):
-    """Process a natural language request. Attempts generation and, if the model indicates ambiguity,
-    returns a clarification prompt to the user (simple approach). Optionally, create a LangChain conversational agent
-    for multi-turn clarifications if requested and available.
-    """
+def handle_nl_request(nl_text, openai_api_key=None, model="gpt-4o", use_langchain=False):
     init_db(force=False)
     schema = get_schema_text()
 
-    # If user requests langchain usage, try to create an agent
-    if use_langchain:
-        try:
-            from .langchain_agent import create_conversational_agent, ask_agent, is_langchain_available  # type: ignore
-        except Exception:
-            # fallback to basic flow
-            use_langchain = False
+    # Case 1: no API key → use mock
+    if not openai_api_key:
+        return mock_fallback(nl_text)
 
-    # Attempt generation
-    sql = generate_sql_from_nl(nl_text, schema, openai_api_key=openai_api_key, model=model)
-    if sql == 'CANNOT_ANSWER':
-        return {'sql': None, 'result': [], 'message': 'Cannot answer based on available schema.'}
+    try:
+        sql = generate_sql_from_nl(nl_text, schema, openai_api_key=openai_api_key, model=model)
+    except Exception as e:
+        # Case 2: API key invalid or quota exceeded → use mock
+        return mock_fallback(nl_text)
 
-    # Execute SQL and return results
+    if sql == "CANNOT_ANSWER":
+        return {"sql": None, "result": [], "message": "Cannot answer based on available schema."}
+
     results = run_query(sql)
-    # If results are empty, optionally try one clarification round
-    if len(results) == 0 and max_clarify > 0:
-        # Simple clarification strategy: ask the user if they meant a different timeframe or field
-        clarification = 'The generated query returned no rows. Do you want to (A) broaden the filters, (B) check a different field, or (C) cancel?'
-        return {'sql': sql, 'result': results, 'message': 'NO_RESULTS_CLARIFICATION', 'clarification': clarification}
+    return {"sql": sql, "result": results, "message": "OK"}
 
-    return {'sql': sql, 'result': results, 'message': 'OK'}
+
+def mock_fallback(nl_text: str):
+    """Return mock SQL + dummy results based on simple keyword rules."""
+    nl_lower = nl_text.lower()
+
+    if "transaction" in nl_lower or "transactions" in nl_lower:
+        return {
+            "sql": "SELECT tx_id, account_id, amount, tx_date, description FROM transactions WHERE account_id = 1;",
+            "result": [
+                {"tx_id": 101, "account_id": 1, "amount": 5000, "tx_date": "2025-08-01", "description": "Salary credit"},
+                {"tx_id": 102, "account_id": 1, "amount": -1500, "tx_date": "2025-08-05", "description": "ATM withdrawal"},
+            ],
+            "message": "⚠️ Mock mode: showing fake transactions (quota exceeded or no key)."
+        }
+
+    elif "balance" in nl_lower:
+        return {
+            "sql": "SELECT account_id, balance FROM accounts WHERE customer_id = 1;",
+            "result": [
+                {"account_id": 1, "balance": 12000.50},
+            ],
+            "message": "⚠️ Mock mode: showing fake balances."
+        }
+
+    else:
+        return {
+            "sql": "SELECT customer_id, name, city FROM customers;",
+            "result": [
+                {"customer_id": 1, "name": "Alice Gupta", "city": "Hyderabad"},
+                {"customer_id": 2, "name": "Ramesh Kumar", "city": "Mumbai"},
+            ],
+            "message": "⚠️ Mock mode: showing fake customers."
+        }
