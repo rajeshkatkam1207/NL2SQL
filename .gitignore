@@ -1,0 +1,29 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environments
+venv/
+.env
+.venv/
+ENV/
+
+# Database & cache
+*.sqlite
+nl2sql.db
+.streamlit/
+
+# IDEs / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Build / packaging
+dist/
+build/
+*.egg-info
+
+# Artifacts (large)
+artifacts/demo/*.mp4
