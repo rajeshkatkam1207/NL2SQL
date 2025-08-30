@@ -17,7 +17,7 @@ def run_tests():
     df = pd.read_excel(XLS_FILE)
     results = []
 
-    api_key = "AIzaSyAXckDDt5tjw0cMoXYUB8WkZpU8YDSFkqk"
+    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise ValueError("No API key found. Please set OPENAI_API_KEY or GEMINI_API_KEY in environment.")
 
