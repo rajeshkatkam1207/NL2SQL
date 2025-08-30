@@ -2,19 +2,20 @@ import os
 import re
 from typing import List
 from openai import OpenAI
+import google.generativeai as genai
 
 FEW_SHOT_EXAMPLES: List[dict] = [
     {
         "nl": "List all customers in Hyderabad",
-        "sql": "SELECT customer_id, name, city FROM customers WHERE city = 'Hyderabad';"
+        "sql": "SELECT customer_id, first_name, last_name, city FROM customers WHERE city = 'Hyderabad';"
     },
     {
         "nl": "Show account balances for customer Alice Gupta",
-        "sql": "SELECT a.account_id, a.account_type, a.balance FROM accounts a JOIN customers c ON a.customer_id = c.customer_id WHERE c.name = 'Alice Gupta';"
+        "sql": "SELECT a.account_id, a.account_type, a.balance FROM accounts a JOIN customers c ON a.customer_id = c.customer_id WHERE c.first_name = 'Alice' AND c.last_name = 'Gupta';"
     },
     {
         "nl": "Get all transactions greater than 1000",
-        "sql": "SELECT tx_id, account_id, amount, tx_date, description FROM transactions WHERE amount > 1000;"
+        "sql": "SELECT transaction_id, account_id, amount, transaction_date, description FROM transactions WHERE amount > 1000;"
     }
 ]
 
@@ -48,24 +49,41 @@ def sanitize_sql_text(text: str) -> str:
         text = text.split(";")[0].strip() + ";"
     return text
 
-def generate_sql_from_nl(nl_query: str, schema_text: str, openai_api_key: str=None, model: str="gpt-4o") -> str:
-    client = OpenAI(api_key=openai_api_key or os.getenv("OPENAI_API_KEY"))
-    if not client.api_key:
-        raise ValueError("OpenAI API key not provided. Set OPENAI_API_KEY or pass key.")
+def detect_provider(api_key: str, default="openai") -> str:
+    """Auto-detect provider from API key format."""
+    if not api_key:
+        return default
+    if api_key.startswith("sk-"):
+        return "openai"
+    elif api_key.startswith("AIza"):
+        return "gemini"
+    return default
 
+def generate_sql_from_nl(nl_query: str, schema_text: str, api_key: str=None, provider="openai", model: str=None) -> str:
     prompt = build_prompt(nl_query, schema_text)
 
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": "You convert natural language to SQL. Be precise, safe and concise."},
-            {"role": "user", "content": prompt}
-        ],
-        max_tokens=512,
-        temperature=0.0,
-    )
+    if provider == "gemini":
+        # pick default model if not set
+        model = model or "gemini-1.5-flash"
+        genai.configure(api_key=api_key or os.getenv("GEMINI_API_KEY"))
+        gemini_model = genai.GenerativeModel(model)
+        resp = gemini_model.generate_content(prompt, request_options={"timeout": 30})
+        text = resp.text.strip()
+    else:  # OpenAI
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key or os.getenv("OPENAI_API_KEY"))
+        model = model or "gpt-4o"
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": "You convert natural language to SQL. Be precise, safe and concise."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=512,
+            temperature=0.0,
+        )
+        text = resp.choices[0].message.content.strip()
 
-    text = resp.choices[0].message.content.strip()
     text = sanitize_sql_text(text)
 
     if not re.match(r"^\s*SELECT\b", text, flags=re.IGNORECASE):

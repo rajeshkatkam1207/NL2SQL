@@ -1,34 +1,44 @@
-
 import sqlite3
-import os
 from pathlib import Path
+import os
 
-DB_PATH = Path(__file__).parent / 'nl2sql.db'
-SCHEMA_SQL = Path(__file__).parent / 'sample_data.sql'
+DB_FILE = Path(__file__).parent / "nl2sql.db"
 
 def init_db(force=False):
-    """Initialize the SQLite database using sample_data.sql.
-    If force=True, the existing DB will be removed and recreated."""
-    if force and DB_PATH.exists():
-        DB_PATH.unlink()
-    conn = sqlite3.connect(DB_PATH)
-    with open(SCHEMA_SQL, 'r') as f:
-        sql = f.read()
-    conn.executescript(sql)
+    # If force=True → delete existing DB
+    if force and DB_FILE.exists():
+        try:
+            os.remove(DB_FILE)
+        except PermissionError:
+            # Windows file lock workaround
+            conn = sqlite3.connect(str(DB_FILE))
+            conn.close()
+            os.remove(DB_FILE)
+
+    # ⬇️ NEW CHECK (prevents re-running schema if DB already exists)
+    if DB_FILE.exists() and not force:
+        return
+
+    conn = sqlite3.connect(str(DB_FILE))
+    cursor = conn.cursor()
+
+    # ⬇️ Runs only when DB is being created fresh (or force=True)
+    schema_file = Path(__file__).parent / "data" / "banking_schema_sqlite.sql"
+    with open(schema_file, "r") as f:
+        cursor.executescript(f.read())
+
+    data_file = Path(__file__).parent / "data" / "banking_data.sql"
+    with open(data_file, "r") as f:
+        cursor.executescript(f.read())
+
     conn.commit()
     conn.close()
-    print(f"Initialized database at {DB_PATH}")
 
-def run_query(query, params=None):
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-    cur.execute(query) if not params else cur.execute(query, params)
-    rows = cur.fetchall()
-    cols = [c[0] for c in cur.description] if cur.description else []
+
+def run_query(sql: str):
+    conn = sqlite3.connect(DB_FILE, check_same_thread=False, timeout=5)
+    cursor = conn.cursor()
+    cursor.execute(sql)
+    rows = cursor.fetchall()
     conn.close()
-    results = [dict(zip(cols, r)) for r in rows]
-    return results
-
-if __name__ == '__main__':
-    init_db(force=False)
+    return rows
